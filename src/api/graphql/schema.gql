@@ -1,0 +1,134 @@
+# ------------------------------------------------------
+# THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
+# ------------------------------------------------------
+
+input CreateTenantInput {
+  address: String
+  billingEmail: String
+  city: String
+  country: String
+  domain: String
+  email: String!
+  features: [String!]
+  locale: String
+  name: String!
+  phone: String
+  planId: String!
+  slug: String!
+  state: String
+  taxId: String
+  timezone: String
+}
+
+"""
+A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.
+"""
+scalar DateTime
+
+input ExtendTenantTrialInput {
+  days: Float!
+}
+
+type Mutation {
+  createTenant(input: CreateTenantInput!): Tenant!
+  deleteTenant(id: ID!): Boolean!
+  extendTenantTrial(id: ID!, input: ExtendTenantTrialInput!): Boolean!
+  updateTenant(id: ID!, input: UpdateTenantInput!): Tenant!
+  updateTenantStatus(id: ID!, input: UpdateTenantStatusInput!): Boolean!
+  updateTenantSubscription(id: ID!, input: UpdateTenantSubscriptionInput!): Boolean!
+}
+
+type Query {
+  getAllTenants(filters: TenantFilterInput): [Tenant!]!
+  getTenantAnalytics: TenantAnalytics!
+  getTenantByDomain(domain: String!): Tenant
+  getTenantByEmail(email: String!): Tenant
+  getTenantById(id: ID!): Tenant
+  getTenantBySlug(slug: String!): Tenant
+}
+
+type Tenant {
+  address: String
+  billingEmail: String
+  city: String
+  country: String
+  createdAt: DateTime!
+  domain: String
+  email: String!
+  features: [String!]!
+  id: ID!
+  isActive: Boolean!
+  locale: String!
+  logoUrl: String
+  maxClients: Float!
+  maxLocations: Float!
+  maxUsers: Float!
+  name: String!
+  phone: String
+  planId: String!
+  settings: String!
+  slug: String!
+  state: String
+  status: TenantStatus!
+  subscriptionEndDate: DateTime
+  subscriptionStartDate: DateTime!
+  taxId: String
+  timezone: String!
+  trialEndDate: DateTime
+  updatedAt: DateTime!
+}
+
+type TenantAnalytics {
+  activeTenants: Float!
+  averageRevenue: Float!
+  cancelledTenants: Float!
+  churnRate: Float!
+  expiredTenants: Float!
+  newTenantsThisMonth: Float!
+  suspendedTenants: Float!
+  topPlans: [String!]!
+  totalTenants: Float!
+  trialTenants: Float!
+}
+
+input TenantFilterInput {
+  limit: Float
+  page: Float
+  planId: String
+  status: TenantStatus
+}
+
+"""The status of a tenant"""
+enum TenantStatus {
+  ACTIVE
+  CANCELLED
+  EXPIRED
+  SUSPENDED
+  TRIAL
+}
+
+input UpdateTenantInput {
+  address: String
+  billingEmail: String
+  city: String
+  country: String
+  domain: String
+  email: String
+  locale: String
+  logoUrl: String
+  name: String
+  phone: String
+  state: String
+  taxId: String
+  timezone: String
+}
+
+input UpdateTenantStatusInput {
+  reason: String
+  status: TenantStatus!
+}
+
+input UpdateTenantSubscriptionInput {
+  endDate: String
+  planId: String!
+}

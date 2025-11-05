@@ -1,0 +1,761 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// === CORE ENTITIES ===
+
+model Tenant {
+  id       String       @id @default(cuid())
+  name     String
+  slug     String       @unique
+  email    String       @unique // Added for admin purposes
+  phone    String? // Added phone field
+  address  String? // Added address fields
+  city     String?
+  state    String?
+  country  String?
+  domain   String?      @unique // Optional custom domain
+  timezone String       @default("UTC")
+  currency String       @default("USD")
+  locale   String       @default("en")
+  plan     Plan         @relation(fields: [planId], references: [id])
+  planId   String
+  status   TenantStatus @default(TRIAL) // Changed default to TRIAL
+
+  // Subscription management
+  subscriptionStartDate DateTime  @default(now())
+  subscriptionEndDate   DateTime?
+  trialEndDate          DateTime?
+
+  // Limits (now managed by admin)
+  maxUsers     Int      @default(3)
+  maxClients   Int      @default(500)
+  maxLocations Int      @default(1)
+  features     String[] @default([])
+
+  // Admin fields
+  logoUrl      String?
+  billingEmail String?
+  taxId        String?
+  isActive     Boolean @default(true)
+
+  settings  Json     @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  users              User[]
+  clients            Client[]
+  services           Service[]
+  products           Product[]
+  appointments       Appointment[]
+  sales              Sale[]
+  campaigns          Campaign[]
+  workflows          Workflow[]
+  workflowExecutions WorkflowExecution[]
+  subscriptions      Subscription[]
+  auditLogs          AuditLog[]
+  reports            Report[]
+
+  @@map("tenants")
+}
+
+model Plan {
+  id          String       @id @default(cuid())
+  name        String
+  description String?
+  price       Decimal      @db.Decimal(10, 2)
+  currency    String       @default("USD")
+  interval    PlanInterval @default(MONTHLY)
+
+  // Limits
+  maxUsers        Int    @default(2)
+  maxMessages     Int    @default(500)
+  maxStorage      BigInt @default(5368709120) // 5GB in bytes
+  maxAppointments Int    @default(1000)
+
+  // Features
+  features String[] @default([])
+  modules  String[] @default(["AGENDA", "CRM"])
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenants       Tenant[]
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+model Subscription {
+  id                 String             @id @default(cuid())
+  tenant             Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId           String
+  plan               Plan               @relation(fields: [planId], references: [id])
+  planId             String
+  status             SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean            @default(false)
+  canceledAt         DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@map("subscriptions")
+}
+
+// === USER MANAGEMENT ===
+
+model User {
+  id        String     @id @default(cuid()) // Will use Supabase Auth UUID
+  email     String
+  firstName String
+  lastName  String
+  phone     String?
+  avatar    String?
+  role      UserRole
+  status    UserStatus @default(ACTIVE)
+
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId String
+
+  // Authentication managed by Supabase - removed password fields
+  // hashedPassword, resetPasswordToken, resetPasswordExpiresAt removed
+
+  emailVerificationToken String?
+  emailVerifiedAt        DateTime?
+  phoneVerifiedAt        DateTime?
+
+  // Security fields
+  twoFactorEnabled Boolean  @default(false)
+  permissions      String[] @default([])
+
+  // User preferences
+  preferences  Json    @default("{}")
+  timezone     String  @default("UTC")
+  locale       String  @default("en")
+  isFirstLogin Boolean @default(true)
+
+  // Professional-specific fields
+  specialties  String[] @default([])
+  commission   Decimal? @db.Decimal(5, 2) // Percentage
+  workingHours Json? // Weekly schedule
+  isActive     Boolean  @default(true)
+
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  appointments Appointment[]
+  sales        Sale[]
+  auditLogs    AuditLog[]
+
+  @@unique([email, tenantId])
+  @@map("users")
+}
+
+// === CLIENT MANAGEMENT ===
+
+model Client {
+  id          String    @id @default(cuid())
+  email       String?
+  phone       String?
+  firstName   String
+  lastName    String
+  dateOfBirth DateTime?
+  gender      Gender?
+  address     String?
+  city        String?
+  country     String?
+
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId String
+
+  // Preferences and notes
+  notes       String?
+  allergies   String?
+  preferences Json     @default("{}")
+  tags        String[] @default([])
+
+  // Communication preferences
+  allowEmail    Boolean @default(true)
+  allowSms      Boolean @default(true)
+  allowWhatsapp Boolean @default(true)
+
+  // Metrics
+  totalVisits   Int       @default(0)
+  totalSpent    Decimal   @default(0) @db.Decimal(10, 2)
+  averageTicket Decimal   @default(0) @db.Decimal(10, 2)
+  lastVisit     DateTime?
+
+  // Client classification
+  segment ClientSegment @default(REGULAR)
+
+  status    ClientStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  // Relations
+  appointments Appointment[]
+  sales        Sale[]
+  reviews      Review[]
+
+  @@unique([email, tenantId], map: "unique_client_email_tenant")
+  @@unique([phone, tenantId], map: "unique_client_phone_tenant")
+  @@map("clients")
+}
+
+// === SERVICES & PRODUCTS ===
+
+model Service {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+  duration    Int // Duration in minutes
+  price       Decimal @db.Decimal(10, 2)
+  category    String?
+  color       String? // For calendar display
+
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId String
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  appointments Appointment[]
+  saleItems    SaleItem[]
+
+  @@map("services")
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  sku         String?
+  barcode     String?
+  price       Decimal  @db.Decimal(10, 2)
+  cost        Decimal? @db.Decimal(10, 2)
+  category    String?
+  brand       String?
+
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId String
+
+  // Inventory
+  stock    Int     @default(0)
+  minStock Int     @default(0)
+  maxStock Int?
+  unit     String? // ml, gr, pcs, etc.
+
+  status    ProductStatus @default(ACTIVE)
+  isActive  Boolean       @default(true)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  // Relations
+  saleItems SaleItem[]
+  movements StockMovement[]
+
+  @@unique([sku, tenantId], map: "unique_product_sku_tenant")
+  @@map("products")
+}
+
+// === APPOINTMENTS ===
+
+model Appointment {
+  id String @id @default(cuid())
+
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId String
+
+  client   Client @relation(fields: [clientId], references: [id])
+  clientId String
+
+  service   Service @relation(fields: [serviceId], references: [id])
+  serviceId String
+
+  staff   User   @relation(fields: [staffId], references: [id])
+  staffId String
+
+  startTime DateTime
+  endTime   DateTime
+  status    AppointmentStatus @default(SCHEDULED)
+
+  notes        String?
+  privateNotes String? // Internal notes
+
+  // Pricing
+  price      Decimal @db.Decimal(10, 2)
+  discount   Decimal @default(0) @db.Decimal(10, 2)
+  finalPrice Decimal @db.Decimal(10, 2)
+
+  // Booking details
+  bookedAt DateTime @default(now())
+  bookedBy String? // User ID or "CLIENT" for self-booking
+
+  // Reminders
+  reminderSent24h  Boolean @default(false)
+  reminderSent3h   Boolean @default(false)
+  confirmationSent Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  sale Sale?
+
+  @@map("appointments")
+}
+
+// === SALES & POS ===
+
+model Sale {
+  id     String @id @default(cuid())
+  number String // Sequential sale number
+
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId String
+
+  client   Client? @relation(fields: [clientId], references: [id])
+  clientId String?
+
+  staff   User   @relation(fields: [staffId], references: [id])
+  staffId String
+
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
+  appointmentId String?      @unique
+
+  // Totals
+  subtotal  Decimal @db.Decimal(10, 2)
+  taxAmount Decimal @default(0) @db.Decimal(10, 2)
+  discount  Decimal @default(0) @db.Decimal(10, 2)
+  tip       Decimal @default(0) @db.Decimal(10, 2)
+  total     Decimal @db.Decimal(10, 2)
+
+  // Payment
+  paymentMethod  PaymentMethod
+  paymentStatus  PaymentStatus @default(PENDING)
+  paymentDetails Json? // Store payment reference and details
+  paidAt         DateTime?
+
+  notes  String?
+  status SaleStatus @default(COMPLETED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  items SaleItem[]
+
+  @@unique([number, tenantId])
+  @@map("sales")
+}
+
+model SaleItem {
+  id String @id @default(cuid())
+
+  sale   Sale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  saleId String
+
+  service   Service? @relation(fields: [serviceId], references: [id])
+  serviceId String?
+
+  product   Product? @relation(fields: [productId], references: [id])
+  productId String?
+
+  // Computed fields for easier querying
+  itemId String // serviceId or productId
+  type   String // 'SERVICE' or 'PRODUCT'
+
+  name      String // Name at time of sale
+  quantity  Int     @default(1)
+  unitPrice Decimal @db.Decimal(10, 2)
+  discount  Decimal @default(0) @db.Decimal(10, 2)
+  total     Decimal @db.Decimal(10, 2)
+
+  @@map("sale_items")
+}
+
+// === INVENTORY ===
+
+model StockMovement {
+  id String @id @default(cuid())
+
+  product   Product @relation(fields: [productId], references: [id])
+  productId String
+
+  type      MovementType
+  quantity  Int // Positive for in, negative for out
+  reason    String?
+  reference String? // Sale ID, adjustment ID, etc.
+
+  balanceBefore Int
+  balanceAfter  Int
+
+  createdBy String // User ID
+  createdAt DateTime @default(now())
+
+  @@map("stock_movements")
+}
+
+// === MARKETING & CAMPAIGNS ===
+
+model Campaign {
+  id          String       @id @default(cuid())
+  name        String
+  description String?
+  type        CampaignType
+
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId String
+
+  // Targeting
+  targetSegment Json // Client filters and conditions
+
+  // Content
+  template  String
+  variables Json           @default("{}")
+  channel   MessageChannel
+
+  // Scheduling
+  scheduledAt DateTime?
+  startDate   DateTime?
+  endDate     DateTime?
+
+  // Status and metrics
+  status    CampaignStatus @default(DRAFT)
+  totalSent Int            @default(0)
+  delivered Int            @default(0)
+  opened    Int            @default(0)
+  clicked   Int            @default(0)
+  converted Int            @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  messages Message[]
+
+  @@map("campaigns")
+}
+
+model Message {
+  id String @id @default(cuid())
+
+  campaign   Campaign? @relation(fields: [campaignId], references: [id])
+  campaignId String?
+
+  // Recipient
+  clientEmail String?
+  clientPhone String?
+  clientName  String
+
+  // Content
+  channel MessageChannel
+  subject String? // For email
+  content String
+
+  // Delivery
+  status       MessageStatus @default(PENDING)
+  sentAt       DateTime?
+  deliveredAt  DateTime?
+  openedAt     DateTime?
+  clickedAt    DateTime?
+  errorMessage String?
+
+  // External references
+  providerMessageId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("messages")
+}
+
+// === WORKFLOWS ===
+
+model Workflow {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId String
+
+  // Configuration
+  triggerType   String @default("MANUAL")
+  triggerConfig Json   @default("{}")
+  trigger       Json // Trigger conditions
+  actions       Json // Actions to execute
+  conditions    Json   @default("{}") // Additional conditions
+
+  status    WorkflowStatus @default(ACTIVE)
+  isActive  Boolean        @default(true)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  // Relations
+  executions WorkflowExecution[]
+
+  @@map("workflows")
+}
+
+model WorkflowExecution {
+  id         String   @id @default(cuid())
+  workflowId String
+  tenantId   String
+  success    Boolean  @default(false)
+  executedAt DateTime @default(now())
+
+  workflow Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("workflow_executions")
+}
+
+// === REVIEWS ===
+
+model Review {
+  id String @id @default(cuid())
+
+  client   Client @relation(fields: [clientId], references: [id])
+  clientId String
+
+  rating  Int // 1-5 stars
+  comment String?
+
+  // Context
+  serviceType String?
+  staffName   String?
+
+  isPublic   Boolean @default(false)
+  isVerified Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("reviews")
+}
+
+// === AUDIT & LOGGING ===
+
+model AuditLog {
+  id String @id @default(cuid())
+
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId String
+
+  user   User?   @relation(fields: [userId], references: [id])
+  userId String?
+
+  action     String // CREATE, UPDATE, DELETE, LOGIN, etc.
+  resource   String // User, Client, Appointment, etc.
+  resourceId String?
+
+  oldValues Json?
+  newValues Json?
+
+  ipAddress String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  @@map("audit_logs")
+}
+
+// === ENUMS ===
+
+enum TenantStatus {
+  TRIAL
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+  EXPIRED
+}
+
+enum PlanInterval {
+  MONTHLY
+  YEARLY
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+}
+
+enum UserRole {
+  OWNER
+  MANAGER
+  RECEPTION
+  STAFF
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum WorkflowStatus {
+  ACTIVE
+  INACTIVE
+  DRAFT
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+  DISCONTINUED
+}
+
+enum ClientSegment {
+  REGULAR
+  VIP
+  PREMIUM
+  NEW
+  LOYAL
+  AT_RISK
+}
+
+enum ClientStatus {
+  ACTIVE
+  INACTIVE
+  BLOCKED
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  PREFER_NOT_TO_SAY
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  NO_SHOW
+  CANCELED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  BANK_TRANSFER
+  DIGITAL_WALLET
+  PAYMENT_LINK
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum SaleStatus {
+  PENDING
+  COMPLETED
+  CANCELED
+  REFUNDED
+}
+
+enum MovementType {
+  PURCHASE
+  SALE
+  ADJUSTMENT
+  TRANSFER
+  RETURN
+}
+
+enum CampaignType {
+  REMINDER
+  BIRTHDAY
+  REENGAGEMENT
+  PROMOTIONAL
+  AVAILABILITY
+}
+
+enum MessageChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  OPENED
+  CLICKED
+  FAILED
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  COMPLETED
+  PAUSED
+  CANCELED
+}
+
+enum ReportStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum ReportFormat {
+  PDF
+  EXCEL
+  CSV
+  JSON
+}
+
+enum ReportFrequency {
+  ONCE
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+model Report {
+  id          String       @id @default(cuid())
+  name        String
+  description String?
+  type        String // ReportType as string
+  status      ReportStatus @default(PENDING)
+  tenantId    String
+  filters     Json         @default("{}")
+  format      ReportFormat @default(PDF)
+  parameters  Json         @default("{}")
+  data        Json?
+  generatedAt DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("reports")
+}

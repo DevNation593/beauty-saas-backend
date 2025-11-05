@@ -1,0 +1,9 @@
+onlyBuiltDependencies:
+  - '@apollo/protobufjs'
+  - '@nestjs/core'
+  - '@prisma/client'
+  - '@prisma/engines'
+  - '@scarf/scarf'
+  - msgpackr-extract
+  - prisma
+  - unrs-resolver
